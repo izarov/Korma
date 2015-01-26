@@ -132,6 +132,12 @@
     (map? v) (map-val v)
     (keyword? v) (field-str v)
     (nil? v) "NULL"
+    (vector? v) (str "array[" (comma-values v) "]")
+    (and (list? v)
+         (rest v)
+         (string? (first v))) (if (not (rest (rest v)))
+                                (str "row" (coll-str (rest v)) "::" (first v))
+                                (str (str-value (second v)) "::" (first v)))
     (coll? v) (coll-str v)
     :else (parameterize v)))
 
