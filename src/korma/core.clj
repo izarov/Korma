@@ -1,5 +1,6 @@
 (ns korma.core
   "Core querying and entity functions"
+  (:refer-clojure :exclude [update])
   (:require [clojure.set :as set]
             [clojure.string :as string]
             [korma.config :as conf]
