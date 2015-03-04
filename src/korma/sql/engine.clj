@@ -132,7 +132,8 @@
     (map? v) (map-val v)
     (keyword? v) (field-str v)
     (nil? v) "NULL"
-    (vector? v) (str "array[" (comma-values v) "]")
+    (and (vector? v) 
+         (= (first v) :array)) (str "array[" (comma-values v) "]")
     (and (list? v)
          (rest v)
          (string? (first v))) (if (not (rest (rest v)))
