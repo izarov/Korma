@@ -133,7 +133,8 @@
     (keyword? v) (field-str v)
     (nil? v) "NULL"
     (and (vector? v) 
-         (= (first v) :array)) (str "array[" (comma-values v) "]")
+         (= (first v) :array)
+         (rest v)) (str "array[" (comma-values (rest v)) "]")
     (and (list? v)
          (rest v)
          (string? (first v))) (if (not (rest (rest v)))
