@@ -1,3 +1,21 @@
+0.4.2
+-----
+* Fix regression in 0.4.1 causing global config changes not to take affect if defdb is called first
+    * This fix reverts "Honor db specific options when using `with-db`" which will be reimplemented in future release
+* Bump clojure/java.jdbc version to 0.3.7 (danielsoro)
+
+0.4.1
+-----
+* Fix warnings when using Clojure 1.7 (glittershark)
+* Bump clojure/java.jdbc version to 0.3.6
+* Add possibility to set initial pool size for connection pool (AKurilin)
+* Add support for driver properties when using connection pool (federkasten)
+* Return number of deleted rows
+* Honor db specific options when using `with-db` (ls4f)
+* Fix lazy namespace resolution of relations (juhovh)
+* Fix arity of `order` (lokori)
+* Stop printing exceptions to \*out\*
+
 0.4.0
 -----
 * Stop using deprecated implementation of [clojure.java.jdbc](https://github.com/clojure/java.jdbc) (scttnlsn)

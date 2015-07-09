@@ -1,4 +1,5 @@
 (ns korma.test.integration.with-db
+  (:refer-clojure :exclude [update])
   (:use clojure.test
         korma.db
         korma.core
@@ -36,13 +37,13 @@
       ;; using a CountDownLatch to synchronize their execution
       (let [latch (CountDownLatch. 2)
             t1 (future (with-db db2
-                      (.countDown latch)
-                      (.await latch)
-                      (delete-some-rows-from-db)))
+                         (.countDown latch)
+                         (.await latch)
+                         (delete-some-rows-from-db)))
             t2 (future (with-db db1
-                      (.countDown latch)
-                      (.await latch)
-                      (delete-some-rows-from-db)))]
+                         (.countDown latch)
+                         (.await latch)
+                         (delete-some-rows-from-db)))]
         @t1
         @t2
         (.await latch))

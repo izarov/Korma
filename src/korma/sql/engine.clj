@@ -1,8 +1,8 @@
 (ns korma.sql.engine
   (:require [clojure.string :as string]
             [clojure.walk :as walk]
-            [korma.config :as conf]
-            [korma.sql.utils :as utils]))
+            [korma.sql.utils :as utils]
+            [korma.db :as db]))
 
 ;;*****************************************************
 ;; dynamic vars
@@ -18,7 +18,7 @@
 ;;*****************************************************
 
 (defn delimit-str [s]
-  (let [{:keys [naming delimiters]} (or *bound-options* @conf/options)
+  (let [{:keys [naming delimiters]} *bound-options*
         [begin end] delimiters
         ->field (:fields naming)]
     (str begin (->field s) end)))
@@ -47,14 +47,14 @@
         sub (utils/sub-query? v)
         pred (utils/pred? v)]
     (cond
-     generated generated
-     pred (apply pred args)
-     func (let [vs (comma-values args)]
-            (format func vs))
-     sub (do
-           (swap! *bound-params* utils/vconcat (:params sub))
-           (utils/wrap (:sql-str sub)))
-     :else (pred-map v))))
+      generated generated
+      pred (apply pred args)
+      func (let [vs (comma-values args)]
+             (format func vs))
+      sub (do
+            (swap! *bound-params* utils/vconcat (:params sub))
+            (utils/wrap (:sql-str sub)))
+      :else (pred-map v))))
 
 (defn table-alias [{:keys [table alias]}]
   (or alias table))
@@ -67,14 +67,14 @@
 
 (defn field-identifier [field]
   (cond
-   (map? field) (map-val field)
-   (string? field) field
-   (= "*" (name field)) "*"
-   :else (let [field-name (name field)
-               parts (string/split field-name #"\.")]
-           (if-not (next parts)
-             (delimit-str field-name)
-             (string/join "." (map delimit-str parts))))))
+    (map? field) (map-val field)
+    (string? field) field
+    (= "*" (name field)) "*"
+    :else (let [field-name (name field)
+                parts (string/split field-name #"\.")]
+            (if-not (next parts)
+              (delimit-str field-name)
+              (string/join "." (map delimit-str parts))))))
 
 (defn prefix [ent field]
   (let [field-name (field-identifier field)
@@ -96,7 +96,7 @@
 
 (defn alias-clause [alias]
   (when alias
-    (str (:alias-delimiter (or *bound-options* @conf/options))
+    (str (:alias-delimiter *bound-options*)
          (delimit-str (name alias)))))
 
 (defn field-str [v]
@@ -104,9 +104,9 @@
                         v
                         [v nil])
         fname (cond
-               (map? fname) (map-val fname)
-               *bound-table* (prefix *bound-table* fname)
-               :else (field-identifier fname))
+                (map? fname) (map-val fname)
+                *bound-table* (prefix *bound-table* fname)
+                :else (field-identifier fname))
         alias-str (alias-clause alias)]
     (str fname alias-str)))
 
@@ -117,9 +117,9 @@
   (if (utils/special-map? v)
     (map-val v)
     (let [tstr (cond
-                (string? v) v
-                (map? v) (:table v)
-                :else (name v))]
+                 (string? v) v
+                 (map? v) (:table v)
+                 :else (name v))]
       (table-identifier tstr))))
 
 (defn parameterize [v]
@@ -155,7 +155,9 @@
                              (table-alias ~query)
                              (:table ~query))
              *bound-aliases* (or (:aliases ~query) #{})
-             *bound-options* (or (:options ~query) @conf/options)]
+             *bound-options* (or (get-in ~query [:db :options])
+                                 (:options db/*current-db*)
+                                 (:options @db/_default))]
      ~@body))
 
 ;;*****************************************************
@@ -207,9 +209,9 @@
 
 (defn pred-= [k v]
   (cond
-   (not-nil? k v) (infix k "=" v)
-   (not-nil? k) (infix k "IS" v)
-   (not-nil? v) (infix v "IS" k)))
+    (not-nil? k v) (infix k "=" v)
+    (not-nil? k) (infix k "IS" v)
+    (not-nil? v) (infix v "IS" k)))
 
 (defn set= [[k v]]
   (map-val (infix k "=" v)))
@@ -262,14 +264,14 @@
 
 (defn from-table [v & [already-aliased?]]
   (cond
-   (string? v) (table-str v)
-   (vector? v) (let [[table alias] v]
-                 (str (from-table table :aliased) (alias-clause alias)))
-   (map? v) (if (:table v)
-              (let [{:keys [table alias]} v]
-                (str (table-str table) (when-not already-aliased? (alias-clause alias))))
-              (map-val v))
-   :else (table-str v)))
+    (string? v) (table-str v)
+    (vector? v) (let [[table alias] v]
+                  (str (from-table table :aliased) (alias-clause alias)))
+    (map? v) (if (:table v)
+               (let [{:keys [table alias]} v]
+                 (str (table-str table) (when-not already-aliased? (alias-clause alias))))
+               (map-val v))
+    :else (table-str v)))
 
 (defn join-clause [join-type table on-clause]
   (let [join-type (string/upper-case (name join-type))

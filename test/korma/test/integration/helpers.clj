@@ -1,4 +1,5 @@
 (ns korma.test.integration.helpers
+  (:refer-clojure :exclude [update])
   (:use clojure.test
         korma.core))
 
@@ -6,12 +7,12 @@
 
 (defentity user
   (table :users)
-  (has-many address {:fk :user_id})
+  (has-many address (fk :user_id))
   (transform
    #(update-in % [:address] (partial sort-by :id))))
 
 (defentity address
-  (belongs-to user {:fk :user_id})
+  (belongs-to user (fk :user_id))
   (belongs-to state))
 
 (defentity state)
@@ -34,7 +35,7 @@
 (defn- random-string []
   (str (java.util.UUID/randomUUID)))
 
-(defn- reset-schema []
+(defn reset-schema []
   (dorun
    (map exec-raw schema)))
 
@@ -62,28 +63,28 @@
   "add up to max-addresses-per-user addresses to each user. ensure that at least one user has no addresses at all"
   [data max-addresses-per-user]
   (assoc data
-    :user (vec
-           (cons
-            (first (:user data))
-            (map
-             (fn [user]
-               (let [addrs (doall
-                            (for [n (range (rand-int max-addresses-per-user))]
-                              (let [a {:user_id (:id user)
-                                       :street (random-string)
-                                       :number (subs (random-string) 0 10)
-                                       :city (random-string)
-                                       :zip (str (rand-int 10000))
-                                       :state_id (-> data :state rand-nth :id)}
-                                    inserted (insert address (values a))
-                                    ;; insert returns a map with a single key
-                                    ;; the key depends on the underlying database, but the
-                                    ;; value is the generated value of the key column
-                                    inserted-id (first (vals inserted))
-                                    a (assoc a :id inserted-id)]
-                                a)))]
-                 (assoc user :address (vec addrs))))
-             (rest (:user data)))))))
+         :user (vec
+                (cons
+                 (first (:user data))
+                 (map
+                  (fn [user]
+                    (let [addrs (doall
+                                 (for [n (range (rand-int max-addresses-per-user))]
+                                   (let [a {:user_id (:id user)
+                                            :street (random-string)
+                                            :number (subs (random-string) 0 10)
+                                            :city (random-string)
+                                            :zip (str (rand-int 10000))
+                                            :state_id (-> data :state rand-nth :id)}
+                                         inserted (insert address (values a))
+                                         ;; insert returns a map with a single key
+                                         ;; the key depends on the underlying database, but the
+                                         ;; value is the generated value of the key column
+                                         inserted-id (first (vals inserted))
+                                         a (assoc a :id inserted-id)]
+                                     a)))]
+                      (assoc user :address (vec addrs))))
+                  (rest (:user data)))))))
 
 (defn populate
   "populate the test database with random data and return a data structure that mirrors the data inserted into the database."

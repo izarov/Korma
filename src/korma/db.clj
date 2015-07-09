@@ -1,24 +1,60 @@
 (ns korma.db
   "Functions for creating and managing database specifications."
-  (:require [clojure.java.jdbc :as jdbc]
-            [korma.config :as conf])
-  (:import (com.mchange.v2.c3p0 ComboPooledDataSource)))
+  (:require [clojure.java.jdbc :as jdbc]))
 
 (defonce _default (atom nil))
 
 (def ^:dynamic *current-db* nil)
 (def ^:dynamic *current-conn* nil)
 
+(defn- ->delimiters [delimiters]
+  (if delimiters
+    (let [[begin end] delimiters
+          end (or end begin)]
+      [begin end])
+    ["\"" "\""]))
+
+(defn- ->naming [strategy]
+  (merge {:fields identity
+          :keys identity} strategy))
+
+(defn- ->alias-delimiter [alias-delimiter]
+  (or alias-delimiter " AS "))
+
+(defn extract-options [{:keys [naming
+                               delimiters 
+                               alias-delimiter
+                               subprotocol]}]
+  {:naming (->naming naming)
+   :delimiters (->delimiters delimiters)
+   :alias-delimiter (->alias-delimiter alias-delimiter)
+   :subprotocol subprotocol})
+
 (defn default-connection
   "Set the database connection that Korma should use by default when no
   alternative is specified."
   [conn]
-  (conf/merge-defaults (:options conn))
   (reset! _default conn))
+
+(defn- as-properties [m]
+  (let [p (java.util.Properties.)]
+    (doseq [[k v] m]
+      (.setProperty p (name k) (str v)))
+    p))
+
+(def c3p0-enabled?
+  (try
+    (import 'com.mchange.v2.c3p0.ComboPooledDataSource)
+    true
+    (catch Throwable _ false)))
+
+(defmacro resolve-new [class]
+  (when-let [resolved (resolve class)]
+    `(new ~resolved)))
 
 (defn connection-pool
   "Create a connection pool for the given database spec."
-  [{:keys [subprotocol subname classname user password
+  [{:keys [subprotocol subname classname
            excess-timeout idle-timeout
            initial-pool-size minimum-pool-size maximum-pool-size
            test-connection-query
@@ -35,11 +71,20 @@
          test-connection-on-checkin false
          test-connection-on-checkout false}
     :as spec}]
-  {:datasource (doto (ComboPooledDataSource.)
+  (when-not c3p0-enabled?
+    (throw (Exception. "com.mchange.v2.c3p0.ComboPooledDataSource not found in class path."))) 
+  {:datasource (doto (resolve-new ComboPooledDataSource)
                  (.setDriverClass classname)
                  (.setJdbcUrl (str "jdbc:" subprotocol ":" subname))
-                 (.setUser user)
-                 (.setPassword password)
+                 (.setProperties (as-properties (dissoc spec
+                                                        :make-pool? :classname :subprotocol :subname
+                                                        :naming :delimiters :alias-delimiter
+                                                        :excess-timeout :idle-timeout
+                                                        :initial-pool-size :minimum-pool-size :maximum-pool-size
+                                                        :test-connection-query
+                                                        :idle-connection-test-period
+                                                        :test-connection-on-checkin
+                                                        :test-connection-on-checkout)))
                  (.setMaxIdleTimeExcessConnections excess-timeout)
                  (.setMaxIdleTime idle-timeout)
                  (.setInitialPoolSize initial-pool-size)
@@ -77,7 +122,7 @@
   {:pool (if (:make-pool? spec)
            (delay-pool spec)
            spec)
-   :options (conf/extract-options spec)})
+   :options (extract-options spec)})
 
 (defmacro defdb
   "Define a database specification. The last evaluated defdb will be used by
@@ -89,15 +134,16 @@
 
 (defn firebird
   "Create a database specification for a FirebirdSQL database. Opts should include
-  keys for :db, :user, :password. You can also optionally set host, port, make-pool? and encoding"
-  [{:keys [host port db make-pool? encoding]
-    :or {host "localhost", port 3050, db "", make-pool? true, encoding "UTF8"}
+  keys for :db, :user, :password. You can also optionally set host, port and make-pool?"
+  [{:keys [host port db make-pool?]
+    :or {host "localhost", port 3050, db "", make-pool? true}
     :as opts}]
   (merge {:classname "org.firebirdsql.jdbc.FBDriver" ; must be in classpath
           :subprotocol "firebirdsql"
-          :subname (str host "/" port ":" db "?encoding=" encoding)
-          :make-pool? make-pool?}
-         opts))
+          :subname (str host "/" port ":" db)
+          :make-pool? make-pool?
+          :encoding "UTF8"}
+         (dissoc opts :host :port :db)))
 
 (defn postgres
   "Create a database specification for a postgres database. Opts should include
@@ -110,7 +156,7 @@
           :subprotocol "postgresql"
           :subname (str "//" host ":" port "/" db)
           :make-pool? make-pool?}
-         opts))
+         (dissoc opts :host :port :db)))
 
 (defn oracle
   "Create a database specification for an Oracle database. Opts should include keys
@@ -122,7 +168,7 @@
           :subprotocol "oracle:thin"
           :subname (str "@" host ":" port)
           :make-pool? make-pool?}
-         opts))
+         (dissoc opts :host :port)))
 
 (defn mysql
   "Create a database specification for a mysql database. Opts should include keys
@@ -136,7 +182,7 @@
           :subname (str "//" host ":" port "/" db)
           :delimiters "`"
           :make-pool? make-pool?}
-         opts))
+         (dissoc opts :host :port :db)))
 
 (defn vertica
   "Create a database specification for a vertica database. Opts should include keys
@@ -150,7 +196,7 @@
           :subname (str "//" host ":" port "/" db)
           :delimiters "\""
           :make-pool? make-pool?}
-         opts))
+         (dissoc opts :host :port :db)))
 
 
 (defn mssql
@@ -163,7 +209,7 @@
           :subprotocol "sqlserver"
           :subname (str "//" host ":" port ";database=" db ";user=" user ";password=" password)
           :make-pool? make-pool?}
-         opts))
+         (dissoc opts :host :port :db)))
 
 (defn msaccess
   "Create a database specification for a Microsoft Access database. Opts
@@ -177,7 +223,7 @@
                         (when (.endsWith db ".accdb") ", *.accdb")
                         ")};Dbq=" db)
           :make-pool? make-pool?}
-         opts))
+         (dissoc opts :db)))
 
 (defn odbc
   "Create a database specification for an ODBC DSN. Opts
@@ -189,7 +235,7 @@
           :subprotocol "odbc"
           :subname dsn
           :make-pool? make-pool?}
-         opts))
+         (dissoc opts :dsn)))
 
 (defn sqlite3
   "Create a database specification for a SQLite3 database. Opts should include a
@@ -201,7 +247,7 @@
           :subprotocol "sqlite"
           :subname db
           :make-pool? make-pool?}
-         opts))
+         (dissoc opts :db)))
 
 (defn h2
   "Create a database specification for a h2 database. Opts should include a key
@@ -213,7 +259,7 @@
           :subprotocol "h2"
           :subname db
           :make-pool? make-pool?}
-         opts))
+         (dissoc opts :db)))
 
 (defmacro transaction
   "Execute all queries within the body in a single transaction.
@@ -225,9 +271,10 @@
                            (map? options))
         {:keys [isolation read-only?]} (when check-options options)
         body (if check-options (rest body) body)]
-    `(jdbc/with-db-transaction [conn# (or *current-conn* (get-connection @_default)) :isolation ~isolation :read-only? ~read-only?]
-       (binding [*current-conn* conn#]
-         ~@body))))
+    `(binding [*current-db* (or *current-db* @_default)]
+      (jdbc/with-db-transaction [conn# (or *current-conn* (get-connection *current-db*)) :isolation ~isolation :read-only? ~read-only?]
+        (binding [*current-conn* conn#]
+          ~@body)))))
 
 (defn rollback
   "Tell this current transaction to rollback."
@@ -239,28 +286,14 @@
   []
   (jdbc/db-is-rollback-only *current-conn*))
 
-(defn- handle-exception [e sql params]
-  (if-not (instance? java.sql.SQLException e)
-    (.printStackTrace e)
-    (do
-      (when-let [ex (.getNextException e)]
-        (handle-exception ex sql params))
-      (println "Failure to execute query with SQL:")
-      (println sql " :: " params)
-      (jdbc/print-sql-exception e)))
-  (throw e))
-
-(defn- exec-sql [{:keys [results sql-str params options]}]
-  (let [{:keys [keys]} (:naming (or options @conf/options))]
-    (try
-      (case results
-        :results (jdbc/query *current-conn*
-                             (apply vector sql-str params)
-                             :identifiers keys)
-        :keys (jdbc/db-do-prepared-return-keys *current-conn* sql-str params)
-        (jdbc/db-do-prepared *current-conn* sql-str params))
-      (catch Exception e
-        (handle-exception e sql-str params)))))
+(defn- exec-sql [{:keys [results sql-str params]}]
+  (let [keys (get-in *current-db* [:options :naming :keys])]
+    (case results
+      :results (jdbc/query *current-conn*
+                           (apply vector sql-str params)
+                           :identifiers keys)
+      :keys (jdbc/db-do-prepared-return-keys *current-conn* sql-str params)
+      (jdbc/db-do-prepared *current-conn* sql-str params))))
 
 (defmacro with-db
   "Execute all queries within the body using the given db spec"

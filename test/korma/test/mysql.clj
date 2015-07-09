@@ -1,8 +1,8 @@
 (ns korma.test.mysql
+  (:refer-clojure :exclude [update])
   (:require [clojure.java.jdbc :as jdbc]
             [korma.mysql :as mysql])
   (:use clojure.test
-        korma.config
         korma.core
         korma.db))
 
@@ -44,8 +44,8 @@
 
 (defn- setup-korma-db []
   (jdbc/db-do-commands mysql-uri "CREATE DATABASE IF NOT EXISTS korma;"
-                                 "USE korma;"
-                                 "CREATE TABLE IF NOT EXISTS `users-live-mysql` (name varchar(200));"))
+                       "USE korma;"
+                       "CREATE TABLE IF NOT EXISTS `users-live-mysql` (name varchar(200));"))
 
 (defn- clean-korma-db []
   (jdbc/db-do-commands mysql-uri "DROP DATABASE korma;"))

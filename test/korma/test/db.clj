@@ -1,8 +1,9 @@
 (ns korma.test.db
   (:use [clojure.test :only [deftest is testing use-fixtures]]
         [korma.core :only [exec-raw]]
-        [korma.db :only [connection-pool defdb get-connection h2
-                         msaccess mssql mysql odbc oracle postgres sqlite3 vertica firebird default-connection transaction]]))
+        [korma.db :only [connection-pool defdb get-connection h2 extract-options
+                         msaccess mssql mysql odbc oracle postgres sqlite3 vertica
+                         firebird default-connection transaction]]))
 
 (defdb mem-db (h2 {:db "mem:test"}))
 
@@ -28,7 +29,32 @@
    :minimum-pool-size 5
    :maximum-pool-size 20
    :test-connection-on-checkout true
-   :test-connection-query "SELECT 1"})
+   :test-connection-query "SELECT 1"
+   :useUnicode true
+   :connectTimeout 1000})
+
+(deftest can-extract-options-merging-subprotocol
+  (let [original (extract-options nil)]
+    (is (= (assoc original :subprotocol "anysql") 
+           (extract-options {:subprotocol "anysql"})))))
+
+(deftest can-extract-options-merging-delimiters
+    (let [original (extract-options nil)]
+          (is (= (assoc original :delimiters ["`" "`"]) 
+                 (extract-options {:delimiters ["`" "`"]})))))
+
+(deftest can-extract-options-merging-alias-delimiter
+    (let [original (extract-options nil)]
+          (is (= (assoc original :alias-delimiter " az ") 
+                 (extract-options {:alias-delimiter " az "})))))
+
+(deftest can-extract-options-merging-naming
+    (let [custom-fn (fn [& args] args)
+                  original (extract-options nil)]
+          (is (= (assoc original :naming {:fields custom-fn
+                                          :keys custom-fn}) 
+                 (extract-options {:naming {:fields custom-fn
+                                            :keys custom-fn}})))))
 
 (deftest connection-pooling-default-test
   (let [pool (connection-pool db-config-with-defaults)
@@ -53,7 +79,10 @@
     (is (= 5 (.getMinPoolSize datasource)))
     (is (= 20 (.getMaxPoolSize datasource)))
     (is (= (:test-connection-query db-config-with-options-set) (.getPreferredTestQuery datasource)))
-    (is (= true (.isTestConnectionOnCheckout datasource)))))
+    (is (= true (.isTestConnectionOnCheckout datasource)))
+    (is (= {"useUnicode" "true"
+            "connectTimeout" "1000"}
+           (.getProperties datasource)))))
 
 (deftest spec-with-missing-keys-returns-itself
   (defdb valid {:datasource :from-app-server})
@@ -66,18 +95,16 @@
   (testing "firebirdsql - defaults"
     (is (= {:classname "org.firebirdsql.jdbc.FBDriver"
             :subprotocol "firebirdsql"
-            :subname "localhost/3050:?encoding=UTF8"
-            :make-pool? true}
+            :subname "localhost/3050:"
+            :make-pool? true
+            :encoding "UTF8"}
            (firebird {}))))
   (testing "firebirdsql - options selected"
-    (is (= {:db "db"
-            :port "port"
-            :host "host"
-            :classname "org.firebirdsql.jdbc.FBDriver"
+    (is (= {:classname "org.firebirdsql.jdbc.FBDriver"
             :subprotocol "firebirdsql"
-            :encoding "NONE"
-            :subname "host/port:db?encoding=NONE"
-            :make-pool? false}
+            :subname "host/port:db"
+            :make-pool? false
+            :encoding "NONE"}
            (firebird {:host "host"
                       :port "port"
                       :db "db"
@@ -92,10 +119,7 @@
             :make-pool? true}
            (postgres {}))))
   (testing "postgres - options selected"
-    (is (= {:db "db"
-            :port "port"
-            :host "host"
-            :classname "org.postgresql.Driver"
+    (is (= {:classname "org.postgresql.Driver"
             :subprotocol "postgresql"
             :subname "//host:port/db"
             :make-pool? false}
@@ -112,9 +136,7 @@
             :make-pool? true}
            (oracle {}))))
   (testing "oracle - options selected"
-    (is (= {:port "port"
-            :host "host"
-            :classname "oracle.jdbc.driver.OracleDriver"
+    (is (= {:classname "oracle.jdbc.driver.OracleDriver"
             :subprotocol "oracle:thin"
             :subname "@host:port"
             :make-pool? false}
@@ -131,10 +153,7 @@
             :make-pool? true}
            (mysql {}))))
   (testing "mysql - options selected"
-    (is (= {:db "db"
-            :port "port"
-            :host "host"
-            :classname "com.mysql.jdbc.Driver"
+    (is (= {:classname "com.mysql.jdbc.Driver"
             :subprotocol "mysql"
             :subname "//host:port/db"
             :delimiters "`"
@@ -153,10 +172,7 @@
             :make-pool? true}
            (vertica {}))))
   (testing "vertica - options selected"
-    (is (= {:db "db"
-            :port "port"
-            :host "host"
-            :classname "com.vertica.jdbc.Driver"
+    (is (= {:classname "com.vertica.jdbc.Driver"
             :subprotocol "vertica"
             :subname "//host:port/db"
             :delimiters "\""
@@ -174,11 +190,8 @@
             :make-pool? true}
            (mssql {}))))
   (testing "mssql - options selected"
-    (is (= {:db "db"
-            :password "password"
+    (is (= {:password "password"
             :user "user"
-            :port "port"
-            :host "host"
             :classname "com.microsoft.sqlserver.jdbc.SQLServerDriver"
             :subprotocol "sqlserver"
             :subname "//host:port;database=db;user=user;password=password"
@@ -201,7 +214,6 @@
     (is (= {:classname "sun.jdbc.odbc.JdbcOdbcDriver"
             :subprotocol "odbc"
             :subname "Driver={Microsoft Access Driver (*.mdb)};Dbq=db.mdb"
-            :db "db.mdb"
             :make-pool? true}
            (msaccess {:db "db.mdb" :make-pool? true}))))
   (testing "msaccess - .accdb selected"
@@ -209,7 +221,6 @@
             :subprotocol "odbc"
             :subname (str "Driver={Microsoft Access Driver (*.mdb, *.accdb)};"
                           "Dbq=db.accdb")
-            :db "db.accdb"
             :make-pool? true}
            (msaccess {:db "db.accdb" :make-pool? true})))))
 
@@ -224,7 +235,6 @@
     (is (= {:classname "sun.jdbc.odbc.JdbcOdbcDriver"
             :subprotocol "odbc"
             :subname "MyDsn"
-            :dsn "MyDsn"
             :make-pool? false}
            (odbc {:dsn "MyDsn" :make-pool? false})))))
 
@@ -236,8 +246,7 @@
             :make-pool? true}
            (sqlite3 {}))))
   (testing "sqlite3 - options selected"
-    (is (= {:db "db"
-            :classname "org.sqlite.JDBC"
+    (is (= {:classname "org.sqlite.JDBC"
             :subprotocol "sqlite"
             :subname "db"
             :make-pool? false}
@@ -251,8 +260,7 @@
             :make-pool? true}
            (h2 {}))))
   (testing "h2 - options selected"
-    (is (= {:db "db"
-            :classname "org.h2.Driver"
+    (is (= {:classname "org.h2.Driver"
             :subprotocol "h2"
             :subname "db"
             :make-pool? false}
