@@ -132,7 +132,7 @@
     (map? v) (map-val v)
     (keyword? v) (field-str v)
     (nil? v) "NULL"
-    (and (vector? v) 
+    (and (vector? v)
          (= (first v) :array)
          (rest v)) (str "array[" (comma-values (rest v)) "]")
     (and (list? v)
@@ -373,6 +373,11 @@
                      (str " OFFSET " offset))]
     (update-in query [:sql-str] str limit-sql offset-sql)))
 
+(defn sql-for-update [{:keys [for-update] :as query}]
+  (if for-update
+    (update-in query [:sql-str] str " FOR UPDATE")
+    query))
+
 ;;*****************************************************
 ;; Combination Queries
 ;;*****************************************************
@@ -408,7 +413,8 @@
                  sql-group
                  sql-having
                  sql-order
-                 sql-limit-offset)
+                 sql-limit-offset
+                 sql-for-update)
      :update (-> query
                  sql-update
                  sql-set

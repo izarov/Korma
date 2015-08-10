@@ -52,6 +52,9 @@
                      :group []
                      :results :results})))
 
+(defn select-for-update* [ent]
+  (assoc (select* ent) :for-update true))
+
 (defn update*
   "Create an empty update query. Ent can either be an entity defined by defentity,
   or a string of the table name."
@@ -119,6 +122,17 @@
         (where {:id 2}))"
   [ent & body]
   (make-query-then-exec #'select* body ent))
+
+(defmacro select-for-update
+  "Creates a select query with exclusive lock, applies any modifying functions in the body and then
+  executes it. `ent` is either a string or an entity created by defentity.
+
+  ex: (select-for-update user
+        (fields :name :email)
+        (where {:id 2}))"
+  [ent & body]
+  (make-query-then-exec #'select-for-update* body ent))
+
 
 (defmacro update
   "Creates an update query, applies any modifying functions in the body and then
@@ -910,7 +924,7 @@
                               (map #(get row %) pk))
                         child-rows (select ent
                                            (body-fn)
-                                           (where 
+                                           (where
                                              (if in-batch
                                                {(first fk-key) [in (vec (flatten fks))]}
                                                (apply sfns/pred-or
