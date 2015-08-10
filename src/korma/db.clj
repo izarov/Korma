@@ -1,6 +1,7 @@
 (ns korma.db
   "Functions for creating and managing database specifications."
-  (:require [clojure.java.jdbc :as jdbc]))
+  (:require [clojure.java.jdbc :as jdbc]
+            [clojure.string]))
 
 (defonce _default (atom nil))
 
@@ -22,13 +23,11 @@
   (or alias-delimiter " AS "))
 
 (defn extract-options [{:keys [naming
-                               delimiters 
-                               alias-delimiter
-                               subprotocol]}]
+                               delimiters
+                               alias-delimiter]}]
   {:naming (->naming naming)
    :delimiters (->delimiters delimiters)
-   :alias-delimiter (->alias-delimiter alias-delimiter)
-   :subprotocol subprotocol})
+   :alias-delimiter (->alias-delimiter alias-delimiter)})
 
 (defn default-connection
   "Set the database connection that Korma should use by default when no
@@ -54,7 +53,7 @@
 
 (defn connection-pool
   "Create a connection pool for the given database spec."
-  [{:keys [subprotocol subname classname
+  [{:keys [connection-uri subprotocol subname classname
            excess-timeout idle-timeout
            initial-pool-size minimum-pool-size maximum-pool-size
            test-connection-query
@@ -72,12 +71,12 @@
          test-connection-on-checkout false}
     :as spec}]
   (when-not c3p0-enabled?
-    (throw (Exception. "com.mchange.v2.c3p0.ComboPooledDataSource not found in class path."))) 
+    (throw (Exception. "com.mchange.v2.c3p0.ComboPooledDataSource not found in class path.")))
   {:datasource (doto (resolve-new ComboPooledDataSource)
                  (.setDriverClass classname)
-                 (.setJdbcUrl (str "jdbc:" subprotocol ":" subname))
+                 (.setJdbcUrl (or connection-uri (str "jdbc:" subprotocol ":" subname)))
                  (.setProperties (as-properties (dissoc spec
-                                                        :make-pool? :classname :subprotocol :subname
+                                                        :make-pool? :classname :subprotocol :subname :connection-uri
                                                         :naming :delimiters :alias-delimiter
                                                         :excess-timeout :idle-timeout
                                                         :initial-pool-size :minimum-pool-size :maximum-pool-size
@@ -110,6 +109,29 @@
         @db
         db))))
 
+(def ^:private subprotocol->classname {"firebirdsql" "org.firebirdsql.jdbc.FBDriver"
+                                       "postgresql"  "org.postgresql.Driver"
+                                       "postgres"    "org.postgresql.Driver"
+                                       "oracle"      "oracle.jdbc.driver.OracleDriver"
+                                       "mysql"       "com.mysql.jdbc.Driver"
+                                       "vertica"     "com.vertica.jdbc.Driver"
+                                       "sqlserver"   "com.microsoft.sqlserver.jdbc.SQLServerDriver"
+                                       "odbc"        "sun.jdbc.odbc.JdbcOdbcDriver"
+                                       "sqlite"      "org.sqlite.JDBC"
+                                       "h2"          "org.h2.Driver"})
+
+(def ^:private subprotocol->options {"mysql" {:delimiters "`"}})
+
+(defn- complete-spec [{:keys [connection-uri subprotocol] :as spec}]
+  (if-let [uri-or-subprotocol (or connection-uri subprotocol)]
+    (let [lookup-key (first (drop-while #{"jdbc"} (clojure.string/split uri-or-subprotocol #":")))]
+      (merge
+        {:classname  (subprotocol->classname lookup-key)
+         :make-pool? true}
+        (subprotocol->options lookup-key)
+        spec))
+    spec))
+
 (defn create-db
   "Create a db connection object manually instead of using defdb. This is often
    useful for creating connections dynamically, and probably should be followed
@@ -119,10 +141,11 @@
 
    If the spec includes `:make-pool? true` makes a connection pool from the spec."
   [spec]
-  {:pool (if (:make-pool? spec)
-           (delay-pool spec)
-           spec)
-   :options (extract-options spec)})
+  (let [spec (complete-spec spec)]
+    {:pool    (if (:make-pool? spec)
+                (delay-pool spec)
+                spec)
+     :options (extract-options spec)}))
 
 (defmacro defdb
   "Define a database specification. The last evaluated defdb will be used by
@@ -135,130 +158,108 @@
 (defn firebird
   "Create a database specification for a FirebirdSQL database. Opts should include
   keys for :db, :user, :password. You can also optionally set host, port and make-pool?"
-  [{:keys [host port db make-pool?]
-    :or {host "localhost", port 3050, db "", make-pool? true}
+  [{:keys [host port db]
+    :or {host "localhost", port 3050, db ""}
     :as opts}]
-  (merge {:classname "org.firebirdsql.jdbc.FBDriver" ; must be in classpath
-          :subprotocol "firebirdsql"
-          :subname (str host "/" port ":" db)
-          :make-pool? make-pool?
-          :encoding "UTF8"}
+  (merge {:subprotocol "firebirdsql"
+          :subname     (str host "/" port ":" db)
+          :encoding    "UTF8"}
          (dissoc opts :host :port :db)))
 
 (defn postgres
   "Create a database specification for a postgres database. Opts should include
   keys for :db, :user, and :password. You can also optionally set host and
   port."
-  [{:keys [host port db make-pool?]
-    :or {host "localhost", port 5432, db "", make-pool? true}
+  [{:keys [host port db]
+    :or {host "localhost", port 5432, db ""}
     :as opts}]
-  (merge {:classname "org.postgresql.Driver" ; must be in classpath
-          :subprotocol "postgresql"
-          :subname (str "//" host ":" port "/" db)
-          :make-pool? make-pool?}
+  (merge {:subprotocol "postgresql"
+          :subname     (str "//" host ":" port "/" db)}
          (dissoc opts :host :port :db)))
 
 (defn oracle
   "Create a database specification for an Oracle database. Opts should include keys
   for :user and :password. You can also optionally set host and port."
-  [{:keys [host port make-pool?]
-    :or {host "localhost", port 1521, make-pool? true}
+  [{:keys [host port]
+    :or {host "localhost", port 1521}
     :as opts}]
-  (merge {:classname "oracle.jdbc.driver.OracleDriver" ; must be in classpath
-          :subprotocol "oracle:thin"
-          :subname (str "@" host ":" port)
-          :make-pool? make-pool?}
+  (merge {:subprotocol "oracle:thin"
+          :subname     (str "@" host ":" port)}
          (dissoc opts :host :port)))
 
 (defn mysql
   "Create a database specification for a mysql database. Opts should include keys
   for :db, :user, and :password. You can also optionally set host and port.
   Delimiters are automatically set to \"`\"."
-  [{:keys [host port db make-pool?]
-    :or {host "localhost", port 3306, db "", make-pool? true}
+  [{:keys [host port db]
+    :or {host "localhost", port 3306, db ""}
     :as opts}]
-  (merge {:classname "com.mysql.jdbc.Driver" ; must be in classpath
-          :subprotocol "mysql"
-          :subname (str "//" host ":" port "/" db)
-          :delimiters "`"
-          :make-pool? make-pool?}
+  (merge {:subprotocol "mysql"
+          :subname     (str "//" host ":" port "/" db)}
          (dissoc opts :host :port :db)))
 
 (defn vertica
   "Create a database specification for a vertica database. Opts should include keys
   for :db, :user, and :password. You can also optionally set host and port.
   Delimiters are automatically set to \"`\"."
-  [{:keys [host port db make-pool?]
-    :or {host "localhost", port 5433, db "", make-pool? true}
+  [{:keys [host port db]
+    :or {host "localhost", port 5433, db ""}
     :as opts}]
-  (merge {:classname "com.vertica.jdbc.Driver" ; must be in classpath
-          :subprotocol "vertica"
-          :subname (str "//" host ":" port "/" db)
-          :delimiters "\""
-          :make-pool? make-pool?}
+  (merge {:subprotocol "vertica"
+          :subname     (str "//" host ":" port "/" db)}
          (dissoc opts :host :port :db)))
-
 
 (defn mssql
   "Create a database specification for a mssql database. Opts should include keys
   for :db, :user, and :password. You can also optionally set host and port."
-  [{:keys [user password db host port make-pool?]
-    :or {user "dbuser", password "dbpassword", db "", host "localhost", port 1433, make-pool? true}
+  [{:keys [user password db host port]
+    :or {user "dbuser", password "dbpassword", db "", host "localhost", port 1433}
     :as opts}]
-  (merge {:classname "com.microsoft.sqlserver.jdbc.SQLServerDriver" ; must be in classpath
-          :subprotocol "sqlserver"
-          :subname (str "//" host ":" port ";database=" db ";user=" user ";password=" password)
-          :make-pool? make-pool?}
+  (merge {:subprotocol "sqlserver"
+          :subname     (str "//" host ":" port ";database=" db ";user=" user ";password=" password)}
          (dissoc opts :host :port :db)))
 
 (defn msaccess
   "Create a database specification for a Microsoft Access database. Opts
   should include keys for :db and optionally :make-pool?."
-  [{:keys [db make-pool?]
-    :or {db "", make-pool? false}
+  [{:keys [db]
+    :or {db ""}
     :as opts}]
-  (merge {:classname "sun.jdbc.odbc.JdbcOdbcDriver" ; must be in classpath
-          :subprotocol "odbc"
-          :subname (str "Driver={Microsoft Access Driver (*.mdb"
-                        (when (.endsWith db ".accdb") ", *.accdb")
-                        ")};Dbq=" db)
-          :make-pool? make-pool?}
+  (merge {:subprotocol "odbc"
+          :subname     (str "Driver={Microsoft Access Driver (*.mdb"
+                            (when (.endsWith db ".accdb") ", *.accdb")
+                            ")};Dbq=" db)
+          :make-pool?  false}
          (dissoc opts :db)))
 
 (defn odbc
   "Create a database specification for an ODBC DSN. Opts
   should include keys for :dsn and optionally :make-pool?."
-  [{:keys [dsn make-pool?]
-    :or {dsn "", make-pool? true}
+  [{:keys [dsn]
+    :or {dsn ""}
     :as opts}]
-  (merge {:classname "sun.jdbc.odbc.JdbcOdbcDriver" ; must be in classpath
-          :subprotocol "odbc"
-          :subname dsn
-          :make-pool? make-pool?}
+  (merge {:subprotocol "odbc"
+          :subname     dsn}
          (dissoc opts :dsn)))
 
 (defn sqlite3
   "Create a database specification for a SQLite3 database. Opts should include a
   key for :db which is the path to the database file."
-  [{:keys [db make-pool?]
-    :or {db "sqlite.db", make-pool? true}
+  [{:keys [db]
+    :or {db "sqlite.db"}
     :as opts}]
-  (merge {:classname "org.sqlite.JDBC" ; must be in classpath
-          :subprotocol "sqlite"
-          :subname db
-          :make-pool? make-pool?}
+  (merge {:subprotocol "sqlite"
+          :subname     db}
          (dissoc opts :db)))
 
 (defn h2
   "Create a database specification for a h2 database. Opts should include a key
   for :db which is the path to the database file."
-  [{:keys [db make-pool?]
-    :or {db "h2.db", make-pool? true}
+  [{:keys [db]
+    :or {db "h2.db"}
     :as opts}]
-  (merge {:classname "org.h2.Driver" ; must be in classpath
-          :subprotocol "h2"
-          :subname db
-          :make-pool? make-pool?}
+  (merge {:subprotocol "h2"
+          :subname     db}
          (dissoc opts :db)))
 
 (defmacro transaction
