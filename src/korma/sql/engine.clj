@@ -375,7 +375,8 @@
 
 (defn sql-for-update [{:keys [for-update] :as query}]
   (if for-update
-    (update-in query [:sql-str] str " FOR UPDATE")
+    (update-in query [:sql-str]
+               str " FOR UPDATE OF \"" (-> query :ent :table) "\"")
     query))
 
 ;;*****************************************************
